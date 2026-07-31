@@ -21,13 +21,14 @@ import {
   paneAt,
   requestAttachmentGrant,
   runMejaCommand,
-  spanRuns,
 } from "./meja-client.js";
 import { parseArgs } from "./parse-args.js";
 import {
   createPasswordGate,
   promptForPassword,
 } from "./password-auth.js";
+import { renderDiagnostics } from "./render-diagnostics.js";
+import { TerminalRow } from "./terminal-row.js";
 
 const VIEWPORT_RESIZE_SETTLE_MS = 80;
 const TERMINAL_LINE_HEIGHT = 1.24;
@@ -134,43 +135,6 @@ function applyControl(value) {
     : null;
 }
 
-function spanClassName(span) {
-  const width = span.end - span.start;
-  return `${span.className} mjw-${width}`;
-}
-
-function spanHasCursor(span) {
-  return span.className.split(/\s+/).includes("__mjc");
-}
-
-function spanMatches(left, right) {
-  return (
-    left.key === right.key &&
-    left.text === right.text &&
-    left.spaceOnly === right.spaceOnly &&
-    left.className === right.className &&
-    left.start === right.start &&
-    left.end === right.end
-  );
-}
-
-function spanPartitionMatches(previous, next) {
-  return (
-    previous.length === next.length &&
-    previous.every((span, index) => {
-      const candidate = next[index];
-      return (
-        span.start === candidate.start &&
-        span.end === candidate.end &&
-        (
-          span.className === candidate.className ||
-          (!spanHasCursor(span) && !spanHasCursor(candidate))
-        )
-      );
-    })
-  );
-}
-
 const cssText = `
 html {
   --mj-attach-bar-height: 32px;
@@ -215,6 +179,7 @@ body {
 .mjr {
   --mj-fg: #d8dee9;
   --mj-bg: #101318;
+  position: relative;
   height: ${TERMINAL_LINE_HEIGHT}em;
   min-height: ${TERMINAL_LINE_HEIGHT}em;
   white-space: pre;
@@ -223,6 +188,7 @@ body {
 }
 
 :where(.mjr > span) {
+  position: absolute;
   display: inline-block;
   vertical-align: top;
   color: var(--mj-fg);
@@ -2433,53 +2399,6 @@ function KeyHelperLabel({ action, label }) {
     : label;
 }
 
-function TerminalRow({ record }) {
-  let spanRecords = spanRuns(record.snapshot);
-  const spans = createCollection(spanRecords);
-  const spanView = spans.map((span) => {
-    const inlineWidth = untrack(
-      () => span().end - span().start > SPAN_WIDTH_CLASS_MAX
-    );
-    return inlineWidth
-      ? <span
-          class={span().className}
-          style={{ width: `${span().end - span().start}ch` }}
-        >
-          {span().text}
-        </span>
-      : <span class={spanClassName(span())}>
-          {span().text}
-        </span>;
-  });
-
-  record.applySnapshot = (snapshot) => {
-    record.snapshot = snapshot;
-    const nextRecords = spanRuns(snapshot);
-    if (spanPartitionMatches(spanRecords, nextRecords)) {
-      for (let index = 0; index < nextRecords.length; index += 1) {
-        if (!spanMatches(spanRecords[index], nextRecords[index])) {
-          spans.set(index, nextRecords[index]);
-        }
-      }
-      spanRecords = nextRecords;
-      return;
-    }
-
-    spanRecords = nextRecords;
-    spans.splice(
-      0,
-      spans.length,
-      ...nextRecords
-    );
-  };
-
-  onDispose(() => {
-    record.applySnapshot = null;
-  });
-
-  return <div class="mjr">{spanView}</div>;
-}
-
 async function listenOnHosts(
   root,
   port,
@@ -2492,7 +2411,9 @@ async function listenOnHosts(
     for (const host of hosts) {
       const server = createSenimanServer(root, {
         allowedOrigins,
+        perMessageDeflate: true,
       });
+      renderDiagnostics.instrumentServer(server);
       passwordGate?.protectServer(server);
       await new Promise((resolve, reject) => {
         const onError = (error) => {
@@ -2929,6 +2850,7 @@ function BrowserRoot() {
 }
 
 try {
+  renderDiagnostics.start();
   if (options.skipPassword) {
     console.warn(
       "seniman-meja: WARNING: built-in password authentication is disabled.\n" +

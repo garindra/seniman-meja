@@ -10,6 +10,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { inflateSync } from "node:zlib";
 import quic from "@infisical/quic";
+import { renderDiagnostics } from "./render-diagnostics.js";
 
 const { QUICClient, events, native } = quic;
 const silentLogger = {
@@ -567,7 +568,7 @@ function validateRenderFrameHeader(flags, rawSize, encodedSize) {
   }
 }
 
-async function readRenderFrame(reader) {
+async function readRenderFrame(reader, onFrame = null) {
   let flags;
   try {
     flags = await reader.byte();
@@ -601,6 +602,7 @@ async function readRenderFrame(reader) {
     throw error;
   }
   if (flags === 0) {
+    onFrame?.({ flags, rawSize, encodedSize });
     return encoded;
   }
 
@@ -621,6 +623,7 @@ async function readRenderFrame(reader) {
   if (decoded.engine.bytesWritten !== encodedSize) {
     throw new Error("render zlib payload has trailing bytes");
   }
+  onFrame?.({ flags, rawSize, encodedSize });
   return decoded.buffer;
 }
 
@@ -951,6 +954,7 @@ class PaneScreen {
     delete this._framePaintStarted;
     delete this._frameScrollSeen;
     this.presentCount += 1;
+    renderDiagnostics.screenFrame(this);
     this.onPresent(this);
     this.dirtyRows.clear();
     this.resetPending = false;
@@ -1335,6 +1339,7 @@ function styleClass(slot, styleId, cursor) {
 }
 
 function rowSnapshot(screen, rowIndex) {
+  renderDiagnostics.rowSnapshot(screen.cols);
   const cells = [];
   const screenCells = screen.cells[rowIndex];
   for (let column = 0; column < screen.cols; column += 1) {
@@ -2296,7 +2301,9 @@ async function consumePaneStream(stream, slot, model) {
   const reader = new AsyncBytes(stream.readable);
   const screen = model.screen(slot);
   while (true) {
-    const payload = await readRenderFrame(reader);
+    const payload = await readRenderFrame(reader, (frame) => {
+      renderDiagnostics.mejaFrame(frame);
+    });
     if (payload === null) {
       return;
     }

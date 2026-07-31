@@ -14,6 +14,7 @@
     "build": "babel src --out-dir dist",
     "watch": "babel src --out-dir dist --watch",
     "start": "node index.js",
+    "pretest": "npm run build",
     "test": "node --test",
     "prepare": "npm run build"
   },
@@ -22,7 +23,7 @@
   },
   "dependencies": {
     "@infisical/quic": "^1.0.8",
-    "seniman": "0.0.172"
+    "seniman": "0.0.173"
   },
   "devDependencies": {
     "@babel/cli": "^7.28.3",
