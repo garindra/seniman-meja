@@ -1,0 +1,33 @@
+{
+  "name": "seniman-meja",
+  "version": "0.0.1",
+  "description": "A Seniman browser frontend for Meja",
+  "type": "module",
+  "bin": {
+    "seniman-meja": "./index.js"
+  },
+  "files": [
+    "dist",
+    "index.js"
+  ],
+  "scripts": {
+    "build": "babel src --out-dir dist",
+    "watch": "babel src --out-dir dist --watch",
+    "start": "node index.js",
+    "test": "node --test",
+    "prepare": "npm run build"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@infisical/quic": "^1.0.8",
+    "seniman": "0.0.172"
+  },
+  "devDependencies": {
+    "@babel/cli": "^7.28.3",
+    "@babel/core": "^7.28.4",
+    "@babel/plugin-syntax-jsx": "^7.27.1"
+  },
+  "license": "MIT"
+}
