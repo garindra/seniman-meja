@@ -21,7 +21,6 @@ import {
   paneAt,
   requestAttachmentGrant,
   runMejaCommand,
-  spanRuns,
 } from "./meja-client.js";
 import { parseArgs } from "./parse-args.js";
 import {
@@ -29,10 +28,10 @@ import {
   promptForPassword,
 } from "./password-auth.js";
 import { renderDiagnostics } from "./render-diagnostics.js";
+import { TerminalRow } from "./terminal-row.js";
 
 const VIEWPORT_RESIZE_SETTLE_MS = 80;
 const TERMINAL_LINE_HEIGHT = 1.24;
-const SPAN_WIDTH_CLASS_MAX = 10;
 const KEY_INPUT = {
   Enter: "\r",
   Backspace: "\x7f",
@@ -133,43 +132,6 @@ function applyControl(value) {
   return code >= 64 && code <= 95
     ? String.fromCodePoint(code & 0x1f)
     : null;
-}
-
-function spanClassName(span) {
-  const width = span.end - span.start;
-  return `${span.className} mjw-${width}`;
-}
-
-function spanHasCursor(span) {
-  return span.className.split(/\s+/).includes("__mjc");
-}
-
-function spanMatches(left, right) {
-  return (
-    left.key === right.key &&
-    left.text === right.text &&
-    left.spaceOnly === right.spaceOnly &&
-    left.className === right.className &&
-    left.start === right.start &&
-    left.end === right.end
-  );
-}
-
-function spanPartitionMatches(previous, next) {
-  return (
-    previous.length === next.length &&
-    previous.every((span, index) => {
-      const candidate = next[index];
-      return (
-        span.start === candidate.start &&
-        span.end === candidate.end &&
-        (
-          span.className === candidate.className ||
-          (!spanHasCursor(span) && !spanHasCursor(candidate))
-        )
-      );
-    })
-  );
 }
 
 const cssText = `
@@ -2432,62 +2394,6 @@ function KeyHelperLabel({ action, label }) {
         <path d={path} />
       </svg>
     : label;
-}
-
-function TerminalRow({ record }) {
-  let spanRecords = spanRuns(record.snapshot);
-  const spans = createCollection(spanRecords);
-  const spanView = spans.map((span) => {
-    const inlineWidth = untrack(
-      () => span().end - span().start > SPAN_WIDTH_CLASS_MAX
-    );
-    return inlineWidth
-      ? <span
-          class={span().className}
-          style={{ width: `${span().end - span().start}ch` }}
-        >
-          {span().text}
-        </span>
-      : <span class={spanClassName(span())}>
-          {span().text}
-        </span>;
-  });
-
-  record.applySnapshot = (snapshot) => {
-    record.snapshot = snapshot;
-    const nextRecords = spanRuns(snapshot);
-    const partitionMatches = spanPartitionMatches(
-      spanRecords,
-      nextRecords
-    );
-    renderDiagnostics.spanTransition(
-      spanRecords,
-      nextRecords,
-      partitionMatches
-    );
-    if (partitionMatches) {
-      for (let index = 0; index < nextRecords.length; index += 1) {
-        if (!spanMatches(spanRecords[index], nextRecords[index])) {
-          spans.set(index, nextRecords[index]);
-        }
-      }
-      spanRecords = nextRecords;
-      return;
-    }
-
-    spanRecords = nextRecords;
-    spans.splice(
-      0,
-      spans.length,
-      ...nextRecords
-    );
-  };
-
-  onDispose(() => {
-    record.applySnapshot = null;
-  });
-
-  return <div class="mjr">{spanView}</div>;
 }
 
 async function listenOnHosts(

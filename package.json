@@ -14,6 +14,7 @@
     "build": "babel src --out-dir dist",
     "watch": "babel src --out-dir dist --watch",
     "start": "node index.js",
+    "pretest": "npm run build",
     "test": "node --test",
     "prepare": "npm run build"
   },
