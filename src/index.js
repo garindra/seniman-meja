@@ -28,6 +28,7 @@ import {
   createPasswordGate,
   promptForPassword,
 } from "./password-auth.js";
+import { renderDiagnostics } from "./render-diagnostics.js";
 
 const VIEWPORT_RESIZE_SETTLE_MS = 80;
 const TERMINAL_LINE_HEIGHT = 1.24;
@@ -2455,7 +2456,16 @@ function TerminalRow({ record }) {
   record.applySnapshot = (snapshot) => {
     record.snapshot = snapshot;
     const nextRecords = spanRuns(snapshot);
-    if (spanPartitionMatches(spanRecords, nextRecords)) {
+    const partitionMatches = spanPartitionMatches(
+      spanRecords,
+      nextRecords
+    );
+    renderDiagnostics.spanTransition(
+      spanRecords,
+      nextRecords,
+      partitionMatches
+    );
+    if (partitionMatches) {
       for (let index = 0; index < nextRecords.length; index += 1) {
         if (!spanMatches(spanRecords[index], nextRecords[index])) {
           spans.set(index, nextRecords[index]);
@@ -2493,6 +2503,7 @@ async function listenOnHosts(
       const server = createSenimanServer(root, {
         allowedOrigins,
       });
+      renderDiagnostics.instrumentServer(server);
       passwordGate?.protectServer(server);
       await new Promise((resolve, reject) => {
         const onError = (error) => {
@@ -2929,6 +2940,7 @@ function BrowserRoot() {
 }
 
 try {
+  renderDiagnostics.start();
   if (options.skipPassword) {
     console.warn(
       "seniman-meja: WARNING: built-in password authentication is disabled.\n" +
