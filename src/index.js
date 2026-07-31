@@ -135,6 +135,38 @@ function spanClassName(span) {
   return `${span.className} mjw-${width}`;
 }
 
+function spanHasCursor(span) {
+  return span.className.split(/\s+/).includes("__mjc");
+}
+
+function spanMatches(left, right) {
+  return (
+    left.key === right.key &&
+    left.text === right.text &&
+    left.spaceOnly === right.spaceOnly &&
+    left.className === right.className &&
+    left.start === right.start &&
+    left.end === right.end
+  );
+}
+
+function spanPartitionMatches(previous, next) {
+  return (
+    previous.length === next.length &&
+    previous.every((span, index) => {
+      const candidate = next[index];
+      return (
+        span.start === candidate.start &&
+        span.end === candidate.end &&
+        (
+          span.className === candidate.className ||
+          (!spanHasCursor(span) && !spanHasCursor(candidate))
+        )
+      );
+    })
+  );
+}
+
 const cssText = `
 html {
   --mj-attach-bar-height: 32px;
@@ -2398,7 +2430,8 @@ function KeyHelperLabel({ action, label }) {
 }
 
 function TerminalRow({ record }) {
-  const spans = createCollection(spanRuns(record.snapshot));
+  let spanRecords = spanRuns(record.snapshot);
+  const spans = createCollection(spanRecords);
   const spanView = spans.map((span) => {
     const inlineWidth = untrack(
       () => span().end - span().start > SPAN_WIDTH_CLASS_MAX
@@ -2417,10 +2450,22 @@ function TerminalRow({ record }) {
 
   record.applySnapshot = (snapshot) => {
     record.snapshot = snapshot;
+    const nextRecords = spanRuns(snapshot);
+    if (spanPartitionMatches(spanRecords, nextRecords)) {
+      for (let index = 0; index < nextRecords.length; index += 1) {
+        if (!spanMatches(spanRecords[index], nextRecords[index])) {
+          spans.set(index, nextRecords[index]);
+        }
+      }
+      spanRecords = nextRecords;
+      return;
+    }
+
+    spanRecords = nextRecords;
     spans.splice(
       0,
       spans.length,
-      ...spanRuns(snapshot)
+      ...nextRecords
     );
   };
 
