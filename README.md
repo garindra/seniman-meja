@@ -1,8 +1,12 @@
-# seniman-meja
+<h1 align="center">seniman-meja</h1>
+
+<div align="center">
+  <img src="screenshot.png" alt="seniman-meja displaying a Meja session in a web browser" width="900">
+</div>
 
 ## Overview
 
-`seniman-meja` lets you interact with your [Meja](https://github.com/garindra/meja) sessions through a web browser on desktop or mobile, without needing a terminal app. Built with [Seniman](https://github.com/senimanjs/seniman), it renders each session as a lightweight DOM terminal with window switching, keyboard and touch input, resizing, scrolling, clipboard integration, and Meja's client-side prompts.
+`seniman-meja` lets you control your [Meja](https://github.com/garindra/meja) sessions through a web browser on desktop or mobile, without needing a terminal app. Built with [Seniman](https://github.com/senimanjs/seniman), it renders each session as a lightweight DOM terminal with window switching, keyboard and touch input, resizing, scrolling, clipboard integration, and Meja's client-side prompts.
 
 ## Installation
 
@@ -28,7 +32,7 @@ Start `seniman-meja` on the computer where the Meja server is running. By defaul
 seniman-meja
 ```
 
-Then open [http://127.0.0.1:7045](http://127.0.0.1:7045). The root page can create a new session, while `/session/<id-or-name>` attaches to an existing one. After attachment, the URL is normalized to the session's stable numeric ID.
+Then open [http://127.0.0.1:7045](http://127.0.0.1:7045).
 
 Meja transport options intentionally mirror the native client where practical:
 
