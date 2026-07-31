@@ -65,7 +65,7 @@ Pass the hostname only—without `https://`, a port, or a path. The option is re
 
 #### Tailscale
 
-[Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve) is the recommended option. It proxies the localhost service over HTTPS within your tailnet, so `seniman-meja` does not need to listen on a Tailscale or LAN address.
+When using Tailscale, [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve) is the recommended option. It proxies the localhost service over HTTPS within your tailnet, so `seniman-meja` does not need to listen on a Tailscale or LAN address.
 
 Before enabling Serve, review your [tailnet access controls](https://tailscale.com/docs/features/access-control) and permit only your Tailscale identity or trusted devices to reach this device. The default tailnet policy is permissive. `seniman-meja` does not perform its own user authentication, so anyone permitted by the tailnet policy to reach the service can control your Meja sessions.
 
