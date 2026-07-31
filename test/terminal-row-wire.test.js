@@ -72,6 +72,51 @@ function opcodes(messages) {
   return messages.map((message) => message[0]);
 }
 
+function structuralOpcodes(messages) {
+  const result = [];
+  for (const message of messages) {
+    let offset = 0;
+    while (offset < message.length) {
+      const opcode = message[offset];
+      result.push(opcode);
+      if (opcode === 3) {
+        const length = message.readUInt16BE(offset + 5);
+        offset += 7 + length;
+      } else if (opcode === 7) {
+        const mode = message[offset + 4];
+        if (mode !== 1 && mode !== 2) {
+          throw new Error(`unsupported test element mode ${mode}`);
+        }
+        const length = message.readUInt16BE(offset + 6);
+        offset += 8 + length;
+      } else if (opcode === 8) {
+        offset += 5;
+      } else if (opcode === 9) {
+        offset += 1;
+        while (message.readUInt16BE(offset) !== 0) {
+          offset += 2;
+        }
+        offset += 2;
+      } else if (opcode === 18) {
+        const count = message.readUInt16BE(offset + 5);
+        offset += 7;
+        for (let index = 0; index < count; index += 1) {
+          const item = message.readUInt16BE(offset);
+          offset += 2;
+          if ((item & 0x8000) === 0) {
+            offset += item;
+          }
+        }
+      } else if (opcode === 19) {
+        offset += 7;
+      } else {
+        throw new Error(`unsupported test opcode ${opcode}`);
+      }
+    }
+  }
+  return result;
+}
+
 test("stable spans emit only the field-level Seniman command", async () => {
   const harness = await createHarness(
     snapshot([{ text: "A", className: "s0", width: 1 }])
@@ -107,6 +152,30 @@ test("inline width changes do not retransmit text or class", async () => {
     );
     assert.deepEqual(opcodes(messages), [7]);
     assert.equal(messages[0][4], 1, "width uses STYLEPROP");
+  } finally {
+    await harness.close();
+  }
+});
+
+test("span splits and merges use localized sequence mutations", async () => {
+  const harness = await createHarness(
+    snapshot([{ text: "A", className: "s0", width: 2 }])
+  );
+  try {
+    const splitMessages = await harness.update(snapshot([
+      { text: "A", className: "s0", width: 1 },
+      { text: "A", className: "s1", width: 1 },
+    ]));
+    const splitOpcodes = structuralOpcodes(splitMessages);
+    assert.equal(splitOpcodes.filter((value) => value === 18).length, 1);
+    assert.equal(splitOpcodes.includes(19), false);
+
+    const mergeMessages = await harness.update(
+      snapshot([{ text: "A", className: "s0", width: 2 }])
+    );
+    const mergeOpcodes = structuralOpcodes(mergeMessages);
+    assert.equal(mergeOpcodes.filter((value) => value === 19).length, 1);
+    assert.equal(mergeOpcodes.includes(18), false);
   } finally {
     await harness.close();
   }

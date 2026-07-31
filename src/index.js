@@ -32,6 +32,7 @@ import { TerminalRow } from "./terminal-row.js";
 
 const VIEWPORT_RESIZE_SETTLE_MS = 80;
 const TERMINAL_LINE_HEIGHT = 1.24;
+const SPAN_WIDTH_CLASS_MAX = 10;
 const KEY_INPUT = {
   Enter: "\r",
   Backspace: "\x7f",

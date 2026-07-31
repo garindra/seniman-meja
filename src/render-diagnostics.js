@@ -171,6 +171,50 @@ class RenderDiagnostics {
     }
   }
 
+  spanReconciliation(previous, next, plan) {
+    if (!this.enabled) {
+      return;
+    }
+    this.add("spanRecordsBefore", previous.length);
+    this.add("spanRecordsAfter", next.length);
+    if (next.length > previous.length) {
+      this.add("spanSplits", next.length - previous.length);
+    } else if (previous.length > next.length) {
+      this.add("spanMerges", previous.length - next.length);
+    }
+    for (const [beforeIndex, afterIndex] of plan.reusedPairs) {
+      const before = previous[beforeIndex];
+      const after = next[afterIndex];
+      const textChanged = before.text !== after.text;
+      const styleChanged = before.className !== after.className;
+      const widthChanged =
+        before.start !== after.start || before.end !== after.end;
+      if (!textChanged && !styleChanged && !widthChanged) {
+        continue;
+      }
+      this.add("stableSpanUpdates");
+      if (textChanged && styleChanged) {
+        this.add("textAndStyleChanges");
+      } else if (textChanged) {
+        this.add("textOnlySpanChanges");
+      } else if (styleChanged) {
+        this.add("styleOnlySpanChanges");
+      } else if (widthChanged) {
+        this.add("widthOnlySpanChanges");
+      }
+    }
+    if (plan.removeCount || plan.insertCount) {
+      this.collectionSplice(
+        plan.removeCount,
+        plan.insertCount,
+        plan.reusedPairs.length > 0
+      );
+      if (plan.reusedPairs.length === 0) {
+        this.add("wholeRowSpanReplacements");
+      }
+    }
+  }
+
   collectionSplice(removed, inserted, localized = true) {
     if (!this.enabled) {
       return;
