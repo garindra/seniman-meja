@@ -8,6 +8,7 @@ import { spawn } from "node:child_process";
 import { createConnection } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { inflateSync } from "node:zlib";
 import quic from "@infisical/quic";
 
 const { QUICClient, events, native } = quic;
@@ -21,7 +22,7 @@ const silentLogger = {
 
 const COMMAND_PROTOCOL_VERSION = 1;
 const COMMAND_BOOTSTRAP_VERSION = 3;
-const MEJA_ALPN = "meja-quic/14";
+const MEJA_ALPN = "meja-quic/15";
 const MSG_FRONTEND_INPUT_BYTES = 1;
 const MSG_FRONTEND_RESIZE = 2;
 const MSG_CLIENT_LAYOUT = 3;
@@ -44,7 +45,6 @@ const STATUS_NORMAL = 1;
 const STATUS_PROMPT = 2;
 const STATUS_MESSAGE = 3;
 
-const DISPLAY_NOOP = 0x00;
 const DISPLAY_START_RENDER = 0x01;
 const DISPLAY_STYLE_INSTALL = 0x02;
 const DISPLAY_SET_WRITE_POSITION = 0x03;
@@ -56,7 +56,6 @@ const DISPLAY_FILL = 0x08;
 const DISPLAY_CURSOR_UPDATE = 0x09;
 const DISPLAY_SCROLL_REGION = 0x0a;
 const DISPLAY_WRITE_CLUSTER = 0x0b;
-const DISPLAY_PRESENT = 0xff;
 
 const DEFAULT_STYLE = Object.freeze({
   bold: false,
@@ -462,6 +461,11 @@ class PayloadReader {
     throw new Error("invalid uvarint");
   }
 
+  varint() {
+    const value = this.uvarint();
+    return value & 1 ? -((value + 1) >> 1) : value >> 1;
+  }
+
   byte() {
     if (this.offset >= this.payload.length) {
       throw new Error("short payload");
@@ -492,6 +496,10 @@ class PayloadReader {
     return new TextDecoder("utf-8", { fatal: true }).decode(value);
   }
 
+  text() {
+    return this.string(MAX_FRAME_SIZE);
+  }
+
   done() {
     if (this.offset !== this.payload.length) {
       throw new Error("trailing payload bytes");
@@ -506,6 +514,114 @@ async function readControlFrame(reader) {
     throw new Error(`control frame exceeds ${MAX_FRAME_SIZE} bytes`);
   }
   return { type, payload: await reader.exact(length) };
+}
+
+async function readCanonicalRenderUvarint(reader) {
+  let value = 0n;
+  for (let index = 0; index < 10; index += 1) {
+    const byte = await reader.byte();
+    if (index === 9 && byte > 1) {
+      throw new Error("render frame uvarint overflow");
+    }
+    value |= BigInt(byte & 0x7f) << BigInt(7 * index);
+    if (byte < 0x80) {
+      if (index > 0 && byte === 0) {
+        throw new Error("overlong render frame uvarint");
+      }
+      if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+        throw new Error("render frame uvarint exceeds safe integer range");
+      }
+      return Number(value);
+    }
+  }
+  throw new Error("render frame uvarint overflow");
+}
+
+function validateRenderFrameHeader(flags, rawSize, encodedSize) {
+  if ((flags & ~1) !== 0) {
+    throw new Error(
+      `render frame reserved flags 0x${(flags & ~1)
+        .toString(16)
+        .padStart(2, "0")} are set`
+    );
+  }
+  if (
+    rawSize === 0 ||
+    encodedSize === 0 ||
+    rawSize > MAX_FRAME_SIZE ||
+    encodedSize > MAX_FRAME_SIZE
+  ) {
+    throw new Error(
+      `invalid render frame sizes raw=${rawSize} encoded=${encodedSize}`
+    );
+  }
+  if (flags === 0 && encodedSize !== rawSize) {
+    throw new Error(
+      `raw render size mismatch raw=${rawSize} encoded=${encodedSize}`
+    );
+  }
+  if (flags === 1 && encodedSize >= rawSize) {
+    throw new Error(
+      `zlib render is not smaller raw=${rawSize} encoded=${encodedSize}`
+    );
+  }
+}
+
+async function readRenderFrame(reader) {
+  let flags;
+  try {
+    flags = await reader.byte();
+  } catch (error) {
+    if (error instanceof EndOfStreamError) {
+      return null;
+    }
+    throw error;
+  }
+
+  let rawSize;
+  let encodedSize;
+  try {
+    rawSize = await readCanonicalRenderUvarint(reader);
+    encodedSize = await readCanonicalRenderUvarint(reader);
+  } catch (error) {
+    if (error instanceof EndOfStreamError) {
+      throw new Error("truncated render frame header");
+    }
+    throw error;
+  }
+  validateRenderFrameHeader(flags, rawSize, encodedSize);
+
+  let encoded;
+  try {
+    encoded = await reader.exact(encodedSize);
+  } catch (error) {
+    if (error instanceof EndOfStreamError) {
+      throw new Error("truncated render frame payload");
+    }
+    throw error;
+  }
+  if (flags === 0) {
+    return encoded;
+  }
+
+  let decoded;
+  try {
+    decoded = inflateSync(encoded, {
+      info: true,
+      maxOutputLength: rawSize + 1,
+    });
+  } catch (error) {
+    throw new Error(`invalid render zlib payload: ${error.message}`);
+  }
+  if (decoded.buffer.length !== rawSize) {
+    throw new Error(
+      `render zlib output size ${decoded.buffer.length}, expected ${rawSize}`
+    );
+  }
+  if (decoded.engine.bytesWritten !== encodedSize) {
+    throw new Error("render zlib payload has trailing bytes");
+  }
+  return decoded.buffer;
 }
 
 function decodePayloadString(payload) {
@@ -691,9 +807,6 @@ async function readDisplayCommand(reader) {
   const opcode = await reader.byte();
   const command = { opcode };
   switch (opcode) {
-    case DISPLAY_NOOP:
-    case DISPLAY_PRESENT:
-      break;
     case DISPLAY_START_RENDER:
       command.revision = await reader.uvarint();
       command.cols = await reader.uvarint();
@@ -728,7 +841,13 @@ async function readDisplayCommand(reader) {
     case DISPLAY_CURSOR_UPDATE:
       command.x = await reader.uvarint();
       command.y = await reader.uvarint();
-      command.visible = (await reader.byte()) === 1;
+      {
+        const visible = await reader.byte();
+        if (visible !== 0 && visible !== 1) {
+          throw new Error(`invalid cursor visibility ${visible}`);
+        }
+        command.visible = visible === 1;
+      }
       break;
     case DISPLAY_SCROLL_REGION:
       command.top = await reader.uvarint();
@@ -747,6 +866,30 @@ function blankCell(styleId = 0) {
   return { text: "", styleId, width: 1 };
 }
 
+function colorsMatch(left, right) {
+  return (
+    left.mode === right.mode &&
+    left.index === right.index &&
+    left.r === right.r &&
+    left.g === right.g &&
+    left.b === right.b
+  );
+}
+
+function stylesMatch(left, right) {
+  return (
+    left.bold === right.bold &&
+    left.dim === right.dim &&
+    left.blink === right.blink &&
+    left.italic === right.italic &&
+    left.underline === right.underline &&
+    left.reverse === right.reverse &&
+    left.invisible === right.invisible &&
+    colorsMatch(left.fg, right.fg) &&
+    colorsMatch(left.bg, right.bg)
+  );
+}
+
 class PaneScreen {
   constructor(slot, onPresent) {
     this.slot = slot;
@@ -759,9 +902,57 @@ class PaneScreen {
     this.row = 0;
     this.column = 0;
     this.styleId = 0;
+    this.hasBarrier = false;
     this.cursor = { x: 0, y: 0, visible: true };
     this.dirtyRows = new Set();
     this.presentCount = 0;
+    this.resetPending = false;
+    this.styleResetPending = false;
+    this.pendingStyleInstalls = [];
+    this.pendingScrollRegions = [];
+  }
+
+  beginFrame() {
+    const staged = Object.assign(
+      Object.create(PaneScreen.prototype),
+      this
+    );
+    staged.cells = this.cells.slice();
+    staged._sharedRows = new WeakSet(this.cells);
+    staged._stylesShared = true;
+    staged.dirtyRows = new Set();
+    staged.resetPending = false;
+    staged.styleResetPending = false;
+    staged.pendingStyleInstalls = [];
+    staged.pendingScrollRegions = [];
+    staged._framePaintStarted = false;
+    staged._frameScrollSeen = false;
+    return staged;
+  }
+
+  ensureMutableRow(row) {
+    const cells = this.cells[row];
+    if (cells && this._sharedRows?.has(cells)) {
+      this.cells[row] = cells.slice();
+    }
+  }
+
+  ensureMutableStyles() {
+    if (this._stylesShared) {
+      this.styles = new Map(this.styles);
+      this._stylesShared = false;
+    }
+  }
+
+  commitFrame(staged) {
+    Object.assign(this, staged);
+    delete this._sharedRows;
+    delete this._stylesShared;
+    delete this._framePaintStarted;
+    delete this._frameScrollSeen;
+    this.presentCount += 1;
+    this.onPresent(this);
+    this.dirtyRows.clear();
     this.resetPending = false;
     this.styleResetPending = false;
     this.pendingStyleInstalls = [];
@@ -788,6 +979,7 @@ class PaneScreen {
     this.row = 0;
     this.column = 0;
     this.styleId = 0;
+    this.hasBarrier = true;
     this.cursor = { x: 0, y: 0, visible: true };
     this.dirtyRows = new Set(
       Array.from({ length: rows }, (_, index) => index)
@@ -799,6 +991,8 @@ class PaneScreen {
       id: 0,
       style: DEFAULT_STYLE,
     }];
+    this._sharedRows = null;
+    this._stylesShared = false;
   }
 
   clearOccupant(row, column) {
@@ -810,6 +1004,7 @@ class PaneScreen {
     ) {
       return;
     }
+    this.ensureMutableRow(row);
     const cells = this.cells[row];
     let anchor = column;
     if (
@@ -928,14 +1123,35 @@ class PaneScreen {
   }
 
   apply(command) {
+    if (
+      command.opcode !== DISPLAY_START_RENDER &&
+      !this.hasBarrier
+    ) {
+      throw new Error(
+        `display opcode 0x${command.opcode
+          .toString(16)
+          .padStart(2, "0")} before START_RENDER`
+      );
+    }
     switch (command.opcode) {
-      case DISPLAY_NOOP:
-        break;
       case DISPLAY_START_RENDER:
         this.reset(command.cols, command.rows, command.revision);
+        this._framePaintStarted = false;
+        this._frameScrollSeen = false;
         break;
       case DISPLAY_STYLE_INSTALL:
-        if (!this.styles.has(command.styleId)) {
+        if (
+          command.styleId === 0 &&
+          !stylesMatch(command.style, DEFAULT_STYLE)
+        ) {
+          throw new Error("invalid canonical default style");
+        }
+        if (this.styles.has(command.styleId)) {
+          if (!stylesMatch(this.styles.get(command.styleId), command.style)) {
+            throw new Error(`style ${command.styleId} redefined`);
+          }
+        } else {
+          this.ensureMutableStyles();
           this.styles.set(command.styleId, command.style);
           this.pendingStyleInstalls.push({
             id: command.styleId,
@@ -944,6 +1160,17 @@ class PaneScreen {
         }
         break;
       case DISPLAY_SET_WRITE_POSITION:
+        if (
+          command.row < 0 ||
+          command.row >= this.rows ||
+          command.column < 0 ||
+          command.column >= this.cols
+        ) {
+          throw new Error(
+            `write position ${command.row},${command.column} outside ` +
+            `${this.cols}x${this.rows} grid`
+          );
+        }
         this.row = command.row;
         this.column = command.column;
         break;
@@ -967,12 +1194,27 @@ class PaneScreen {
             styleId
           );
         }
+        this._framePaintStarted = true;
         break;
       }
       case DISPLAY_WRITE_CLUSTER:
+        if (!command.text) {
+          throw new Error("empty display cluster");
+        }
         this.writeCell(command.text, command.width, this.styleId);
+        this._framePaintStarted = true;
         break;
       case DISPLAY_FILL:
+        if (
+          command.columns <= 0 ||
+          (command.width !== 1 && command.width !== 2) ||
+          command.columns % command.width !== 0
+        ) {
+          throw new Error(
+            `invalid fill width ${command.width} for ` +
+            `${command.columns} columns`
+          );
+        }
         for (
           let columns = 0;
           columns < command.columns;
@@ -984,6 +1226,7 @@ class PaneScreen {
             this.styleId
           );
         }
+        this._framePaintStarted = true;
         break;
       case DISPLAY_CURSOR_UPDATE: {
         const previousRow = this.cursor.y;
@@ -1001,16 +1244,13 @@ class PaneScreen {
         break;
       }
       case DISPLAY_SCROLL_REGION:
+        if (this._framePaintStarted || this._frameScrollSeen) {
+          throw new Error(
+            "SCROLL_REGION must precede paint and occur once per frame"
+          );
+        }
         this.scrollRegion(command.top, command.bottom, command.delta);
-        break;
-      case DISPLAY_PRESENT:
-        this.presentCount += 1;
-        this.onPresent(this);
-        this.dirtyRows.clear();
-        this.resetPending = false;
-        this.styleResetPending = false;
-        this.pendingStyleInstalls = [];
-        this.pendingScrollRegions = [];
+        this._frameScrollSeen = true;
         break;
       default:
         throw new Error(`unsupported display opcode ${command.opcode}`);
@@ -2043,20 +2283,25 @@ async function drainStream(stream) {
   }
 }
 
+async function applyRenderPayload(payload, screen) {
+  const payloadReader = new PayloadReader(payload);
+  const staged = screen.beginFrame();
+  while (payloadReader.offset < payload.length) {
+    staged.apply(await readDisplayCommand(payloadReader));
+  }
+  screen.commitFrame(staged);
+}
+
 async function consumePaneStream(stream, slot, model) {
   const reader = new AsyncBytes(stream.readable);
   const screen = model.screen(slot);
   while (true) {
-    let command;
-    try {
-      command = await readDisplayCommand(reader);
-    } catch (error) {
-      if (error instanceof EndOfStreamError) {
-        return;
-      }
-      throw error;
+    const payload = await readRenderFrame(reader);
+    if (payload === null) {
+      return;
     }
-    screen.apply(command);
+
+    await applyRenderPayload(payload, screen);
   }
 }
 
@@ -2287,4 +2532,11 @@ export {
   requestAttachmentGrant,
   runMejaCommand,
   spanRuns,
+};
+
+export const __testing = {
+  AsyncBytes,
+  PaneScreen,
+  applyRenderPayload,
+  readRenderFrame,
 };

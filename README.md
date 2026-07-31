@@ -13,7 +13,7 @@
 You need:
 
 - Node.js 18 or newer.
-- A running Meja v0.0.21 server or later.
+- A running Meja v0.0.23 server or later.
 
 From a local checkout of this repository, install its dependencies and install the command globally:
 
