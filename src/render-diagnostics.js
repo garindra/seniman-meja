@@ -204,15 +204,15 @@ class RenderDiagnostics {
         this.add("widthOnlySpanChanges");
       }
     }
-    if (plan.removeCount || plan.insertCount) {
+    for (const operation of plan.operations) {
       this.collectionSplice(
-        plan.removeCount,
-        plan.insertCount,
+        operation.removeCount,
+        operation.insertCount,
         plan.reusedPairs.length > 0
       );
-      if (plan.reusedPairs.length === 0) {
-        this.add("wholeRowSpanReplacements");
-      }
+    }
+    if (plan.operations.length && plan.reusedPairs.length === 0) {
+      this.add("wholeRowSpanReplacements");
     }
   }
 

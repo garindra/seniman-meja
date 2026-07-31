@@ -180,3 +180,27 @@ test("span splits and merges use localized sequence mutations", async () => {
     await harness.close();
   }
 });
+
+test("stable islands survive multiple localized insertions", async () => {
+  const harness = await createHarness(snapshot([
+    { text: "A", className: "s0", width: 1 },
+    { text: "B", className: "s1", width: 1 },
+    { text: "C", className: "s2", width: 1 },
+    { text: "D", className: "s3", width: 1 },
+  ]));
+  try {
+    const messages = await harness.update(snapshot([
+      { text: "A", className: "s0", width: 1 },
+      { text: "X", className: "sx", width: 1 },
+      { text: "B", className: "s1", width: 1 },
+      { text: "C", className: "s2", width: 1 },
+      { text: "Y", className: "sy", width: 1 },
+      { text: "D", className: "s3", width: 1 },
+    ]));
+    const commands = structuralOpcodes(messages);
+    assert.equal(commands.filter((value) => value === 18).length, 2);
+    assert.equal(commands.includes(19), false);
+  } finally {
+    await harness.close();
+  }
+});

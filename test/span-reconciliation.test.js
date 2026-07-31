@@ -15,10 +15,8 @@ function span(start, end, overrides = {}) {
 
 function compact(plan) {
   return {
-    start: plan.start,
-    removeCount: plan.removeCount,
-    insertCount: plan.insertCount,
     reusedPairs: plan.reusedPairs,
+    operations: plan.operations,
   };
 }
 
@@ -29,10 +27,13 @@ test("plans a one-span split as one insertion", () => {
       [span(0, 2), span(2, 4)]
     )),
     {
-      start: 1,
-      removeCount: 0,
-      insertCount: 1,
       reusedPairs: [[0, 0]],
+      operations: [{
+        start: 1,
+        removeCount: 0,
+        nextStart: 1,
+        insertCount: 1,
+      }],
     }
   );
 });
@@ -44,10 +45,13 @@ test("plans a two-span merge as one removal", () => {
       [span(0, 4)]
     )),
     {
-      start: 1,
-      removeCount: 1,
-      insertCount: 0,
       reusedPairs: [[0, 0]],
+      operations: [{
+        start: 1,
+        removeCount: 1,
+        nextStart: 1,
+        insertCount: 0,
+      }],
     }
   );
 });
@@ -59,10 +63,8 @@ test("reuses all records when only boundaries move", () => {
       [span(0, 1), span(1, 4)]
     )),
     {
-      start: 2,
-      removeCount: 0,
-      insertCount: 0,
       reusedPairs: [[0, 0], [1, 1]],
+      operations: [],
     }
   );
 });
@@ -74,10 +76,13 @@ test("splices only a changed middle", () => {
       [span(0, 2), span(2, 3), span(3, 4), span(4, 6)]
     )),
     {
-      start: 2,
-      removeCount: 0,
-      insertCount: 1,
       reusedPairs: [[0, 0], [1, 1], [2, 3]],
+      operations: [{
+        start: 2,
+        removeCount: 0,
+        nextStart: 2,
+        insertCount: 1,
+      }],
     }
   );
 });
@@ -105,12 +110,53 @@ test("fully replaces incompatible inline-width modes", () => {
       [span(0, 11)]
     )),
     {
-      start: 0,
-      removeCount: 1,
-      insertCount: 1,
       reusedPairs: [],
+      operations: [{
+        start: 0,
+        removeCount: 1,
+        nextStart: 0,
+        insertCount: 1,
+      }],
     }
   );
+});
+
+test("preserves stable islands with multiple localized insertions", () => {
+  const previous = [
+    span(0, 1, { text: "A" }),
+    span(1, 2, { text: "B" }),
+    span(2, 3, { text: "C" }),
+    span(3, 4, { text: "D" }),
+  ];
+  const next = [
+    span(0, 1, { text: "A" }),
+    span(1, 2, { text: "X" }),
+    span(2, 3, { text: "B" }),
+    span(3, 4, { text: "C" }),
+    span(4, 5, { text: "Y" }),
+    span(5, 6, { text: "D" }),
+  ];
+  const plan = planSpanReconciliation(previous, next);
+  assert.deepEqual(plan.reusedPairs, [
+    [0, 0],
+    [1, 2],
+    [2, 3],
+    [3, 5],
+  ]);
+  assert.deepEqual(plan.operations, [
+    {
+      start: 1,
+      removeCount: 0,
+      nextStart: 1,
+      insertCount: 1,
+    },
+    {
+      start: 3,
+      removeCount: 0,
+      nextStart: 4,
+      insertCount: 1,
+    },
+  ]);
 });
 
 test("keeps wide, space-only, and grapheme spans reusable", () => {

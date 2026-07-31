@@ -179,6 +179,7 @@ body {
 .mjr {
   --mj-fg: #d8dee9;
   --mj-bg: #101318;
+  position: relative;
   height: ${TERMINAL_LINE_HEIGHT}em;
   min-height: ${TERMINAL_LINE_HEIGHT}em;
   white-space: pre;
@@ -187,6 +188,7 @@ body {
 }
 
 :where(.mjr > span) {
+  position: absolute;
   display: inline-block;
   vertical-align: top;
   color: var(--mj-fg);
@@ -2409,6 +2411,7 @@ async function listenOnHosts(
     for (const host of hosts) {
       const server = createSenimanServer(root, {
         allowedOrigins,
+        perMessageDeflate: true,
       });
       renderDiagnostics.instrumentServer(server);
       passwordGate?.protectServer(server);
