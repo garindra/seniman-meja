@@ -22,6 +22,7 @@ function usage(message) {
     "  -p, --web-port port     localhost web port (default: 7045)\n" +
     "  --listen ip-address     listen on an additional local IP (repeatable)\n" +
     "  --allow-origin hostname allow an additional browser origin (repeatable)\n" +
+    "  --skip-password         disable built-in web authentication (unsafe)\n" +
     "\n" +
     "Open /session/<id-or-name> to attach, or / to create a session."
   );
@@ -47,6 +48,7 @@ export function parseArgs(argv) {
     remotePath: "meja",
     listenHosts: [WEB_HOST],
     allowedOrigins: [...WEB_ORIGINS],
+    skipPassword: false,
     port: 7045,
     cols: 80,
     rows: 20,
@@ -110,6 +112,9 @@ export function parseArgs(argv) {
         }
         break;
       }
+      case "--skip-password":
+        options.skipPassword = true;
+        break;
       case "--listen": {
         const address = value();
         if (

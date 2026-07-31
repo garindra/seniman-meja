@@ -2929,8 +2929,19 @@ function BrowserRoot() {
 }
 
 try {
-  const password = await promptForPassword();
-  passwordGate = await createPasswordGate(password);
+  if (options.skipPassword) {
+    console.warn(
+      "seniman-meja: WARNING: built-in password authentication is disabled.\n" +
+      "Every user and process that can reach the web listener can read " +
+      "terminal output and control Meja. Browser Origin checks are not " +
+      "authentication.\nOnly use --skip-password when all such clients " +
+      "are trusted or a trusted upstream performs authentication. For " +
+      "remote access, use HTTPS, Tailscale, or another encrypted transport."
+    );
+  } else {
+    const password = await promptForPassword();
+    passwordGate = await createPasswordGate(password);
+  }
   const root = createRoot(BrowserRoot);
   // Terminal input routinely exceeds Seniman's form-oriented event limit.
   root.setRateLimit({ disabled: true });

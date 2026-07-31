@@ -46,6 +46,16 @@ test("redirects unauthenticated requests to the login page", async () => {
   );
 });
 
+test("serves a login page consistent with the Seniman connection UI", async () => {
+  const origin = await startServer();
+  const response = await fetch(`${origin}/__seniman_meja/login`);
+  const body = await response.text();
+  assert.equal(response.status, 200);
+  assert.match(body, /<h1>Authentication required<\/h1>/);
+  assert.match(body, /width: min\(100%, 58ch\)/);
+  assert.match(body, /background: #202630/);
+});
+
 test("login creates a session that gates protected requests", async () => {
   const origin = await startServer();
   const failed = await fetch(`${origin}/__seniman_meja/login`, {

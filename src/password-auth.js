@@ -84,29 +84,37 @@ function loginPage(next, message = "") {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Sign in · seniman-meja</title>
   <style>
-    :root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    :root { color-scheme: dark; }
     * { box-sizing: border-box; }
-    body { min-height: 100vh; margin: 0; display: grid; place-items: center; background: #101318; color: #d8dee9; }
-    main { width: min(360px, calc(100% - 32px)); padding: 24px; border: 1px solid #343b46; border-radius: 8px; background: #171b22; }
-    h1 { margin: 0 0 20px; font-size: 18px; font-weight: 600; }
-    label { display: block; margin-bottom: 8px; font-size: 13px; }
-    input, button { width: 100%; min-height: 42px; border-radius: 5px; font: inherit; }
-    input { padding: 8px 10px; border: 1px solid #4b5563; background: #0f1217; color: inherit; }
-    input:focus { outline: 2px solid #78a9ff; outline-offset: 1px; }
-    button { margin-top: 14px; border: 0; background: #78a9ff; color: #0b1020; font-weight: 700; cursor: pointer; }
-    .error { margin: 0 0 14px; color: #ff8f8f; font-size: 13px; }
+    html, body { min-height: 100%; margin: 0; background: #101318; color: #d8dee9; }
+    body { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+    main { display: flex; min-height: 100vh; align-items: center; justify-content: center; padding: 24px; }
+    section { width: min(100%, 58ch); color: #9aa5b5; line-height: 1.5; }
+    h1 { margin: 0 0 8px; color: #d8dee9; font-size: 16px; }
+    p { margin: 0; }
+    form { margin-top: 18px; }
+    label { display: block; margin-bottom: 7px; color: #687386; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; }
+    input { display: block; width: 100%; padding: 8px 10px; border: 1px solid #303846; border-radius: 0; outline: none; color: #d8dee9; background: #171c24; font: inherit; }
+    input:focus { border-color: #687386; }
+    button { appearance: none; margin-top: 10px; padding: 7px 10px; border: 1px solid #4b5565; border-radius: 0; color: #d8dee9; background: #202630; font: inherit; cursor: pointer; }
+    button:hover { background: #282f3a; }
+    button:focus-visible { outline: 1px solid #9fb9ea; outline-offset: 2px; }
+    .error { margin: 0 0 18px; color: #d06c75; white-space: pre-wrap; }
   </style>
 </head>
 <body>
   <main>
-    <h1>seniman-meja</h1>
-    ${status}
-    <form method="post" action="${LOGIN_PATH}">
-      <input type="hidden" name="next" value="${escapedNext}">
-      <label for="password">Password</label>
-      <input id="password" name="password" type="password" autocomplete="current-password" autofocus required>
-      <button type="submit">Sign in</button>
-    </form>
+    <section>
+      <h1>Authentication required</h1>
+      <p>Enter the password configured when seniman-meja started.</p>
+      <form method="post" action="${LOGIN_PATH}">
+        ${status}
+        <input type="hidden" name="next" value="${escapedNext}">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" autofocus required>
+        <button type="submit">Sign in</button>
+      </form>
+    </section>
   </main>
 </body>
 </html>`;
