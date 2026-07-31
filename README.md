@@ -49,6 +49,18 @@ seniman-meja -p 9000
 
 Run `seniman-meja --help` for the complete command-line reference.
 
+### Render diagnostics
+
+Set `SENIMAN_MEJA_RENDER_DIAGNOSTICS=1` while investigating terminal
+rendering bandwidth. Every five seconds, the server writes one JSON summary
+to stderr containing Meja frame sizes, dirty rows, span reconciliation and
+Collection operations, Seniman WebSocket payload and TCP byte counts, CPU
+time, and RSS. Diagnostics are disabled by default.
+
+```sh
+SENIMAN_MEJA_RENDER_DIAGNOSTICS=1 seniman-meja
+```
+
 ### Password protection
 
 `seniman-meja` requires a web access password every time it starts. The

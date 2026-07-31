@@ -98,6 +98,7 @@ class RenderDiagnostics {
     this.enabled = enabled;
     this.counters = freshCounters();
     this.startedAt = Date.now();
+    this.cpuStart = process.cpuUsage();
     this.interval = null;
   }
 
@@ -245,13 +246,27 @@ class RenderDiagnostics {
 
   snapshot(reset = false) {
     const now = Date.now();
+    const durationMs = now - this.startedAt;
+    const cpu = process.cpuUsage(this.cpuStart);
     const result = {
-      durationMs: now - this.startedAt,
+      durationMs,
       ...this.counters,
+      mejaRawBytesPerSecond:
+        Math.round(this.counters.mejaRawBytes * 1000 / durationMs),
+      websocketPayloadBytesPerSecond:
+        Math.round(
+          this.counters.websocketPayloadBytes * 1000 / durationMs
+        ),
+      tcpBytesWrittenPerSecond:
+        Math.round(this.counters.tcpBytesWritten * 1000 / durationMs),
+      cpuUserMs: cpu.user / 1000,
+      cpuSystemMs: cpu.system / 1000,
+      rssBytes: process.memoryUsage().rss,
     };
     if (reset) {
       this.counters = freshCounters();
       this.startedAt = now;
+      this.cpuStart = process.cpuUsage();
     }
     return result;
   }
