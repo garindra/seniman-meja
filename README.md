@@ -49,6 +49,23 @@ seniman-meja -p 9000
 
 Run `seniman-meja --help` for the complete command-line reference.
 
+### Password protection
+
+`seniman-meja` requires a web access password every time it starts. The
+password is prompted for interactively so it does not appear in the command
+line or shell history:
+
+```sh
+seniman-meja
+```
+
+After signing in through the browser, the application uses an HTTP-only session
+cookie to authenticate both page requests and WebSocket connections. Sessions
+expire after 12 hours or when `seniman-meja` stops.
+
+Password protection applies to the browser frontend. A process running as the
+same Unix user may still connect directly to the Meja server socket.
+
 ### Exposing externally
 
 Exposing `seniman-meja` externally is a powerful way to interact with your Meja sessions remotely using the standard web browser on another computer, phone, or tablet. However, it requires extra care: access to `seniman-meja` should be treated as access to an interactive shell. A connected user can read terminal output, send keystrokes, run commands, and access clipboard data exposed by the session.
@@ -58,6 +75,8 @@ Thankfully, solutions such as Tailscale and Cloudflare Tunnel make it easier to 
 By default, `seniman-meja` listens only on `127.0.0.1` and accepts browser origins only for `localhost` and `127.0.0.1`.
 
 If the browser is on the same laptop, keep this default. You do not need Tailscale, Cloudflare Tunnel, a public listening address, or an open firewall port.
+
+When the browser is on another computer or device, the connection must use an encrypted transport. The Tailscale and Cloudflare Tunnel configurations below provide one. If you use neither, put `seniman-meja` behind an HTTPS reverse proxy or another encrypted VPN or tunnel. The built-in password authenticates the user but does not encrypt the connection, so never expose it over ordinary LAN or public HTTP. Direct HTTP to a Tailscale IP is acceptable because Tailscale encrypts traffic between its nodes end to end, although the browser will still treat the page as an insecure context.
 
 If you deliberately make the browser frontend available through a reverse proxy, add only its exact browser hostname:
 
@@ -71,7 +90,7 @@ Pass the hostname only—without `https://`, a port, or a path. The option is re
 
 When using Tailscale, [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve) is the recommended option. It proxies the localhost service over HTTPS within your tailnet, so `seniman-meja` does not need to listen on a Tailscale or LAN address.
 
-Before enabling Serve, review your [tailnet access controls](https://tailscale.com/docs/features/access-control) and permit only your Tailscale identity or trusted devices to reach this device. The default tailnet policy is permissive. `seniman-meja` does not perform its own user authentication, so anyone permitted by the tailnet policy to reach the service can control your Meja sessions.
+Before enabling Serve, review your [tailnet access controls](https://tailscale.com/docs/features/access-control) and permit only your Tailscale identity or trusted devices to reach this device. The default tailnet policy is permissive. The built-in password remains required, while restrictive tailnet rules provide an additional layer and prevent untrusted tailnet users from reaching the login page at all.
 
 Use the exact MagicDNS hostname assigned to the device:
 
@@ -98,7 +117,7 @@ seniman-meja \
   --allow-origin 100.64.0.10
 ```
 
-Then open `http://100.64.0.10:7045`. This method expands the service's listening interface and does not provide browser HTTPS, so prefer Serve when possible. Restrict TCP port `7045` to your identity or trusted devices in the tailnet policy. `--listen` accepts only a specific local IP address; wildcard addresses such as `0.0.0.0` and `::` are rejected.
+Then open `http://100.64.0.10:7045`. This method expands the service's listening interface and does not provide browser HTTPS, so prefer Serve when possible. Traffic between Tailscale nodes is nevertheless encrypted end to end. Restrict TCP port `7045` to your identity or trusted devices in the tailnet policy. `--listen` accepts only a specific local IP address; wildcard addresses such as `0.0.0.0` and `::` are rejected.
 
 #### Cloudflare Tunnel with single-email access
 

@@ -24,6 +24,10 @@ import {
   spanRuns,
 } from "./meja-client.js";
 import { parseArgs } from "./parse-args.js";
+import {
+  createPasswordGate,
+  promptForPassword,
+} from "./password-auth.js";
 
 const VIEWPORT_RESIZE_SETTLE_MS = 80;
 const TERMINAL_LINE_HEIGHT = 1.24;
@@ -2476,13 +2480,20 @@ function TerminalRow({ record }) {
   return <div class="mjr">{spanView}</div>;
 }
 
-async function listenOnHosts(root, port, hosts, allowedOrigins) {
+async function listenOnHosts(
+  root,
+  port,
+  hosts,
+  allowedOrigins,
+  passwordGate
+) {
   const servers = [];
   try {
     for (const host of hosts) {
       const server = createSenimanServer(root, {
         allowedOrigins,
       });
+      passwordGate?.protectServer(server);
       await new Promise((resolve, reject) => {
         const onError = (error) => {
           server.off("listening", onListening);
@@ -2513,6 +2524,7 @@ async function listenOnHosts(root, port, hosts, allowedOrigins) {
 const options = parseArgs(process.argv.slice(2));
 const activeAttachments = new Set();
 let webServers = [];
+let passwordGate = null;
 
 function connectionCloseState(error) {
   const close = error?.data;
@@ -2917,6 +2929,8 @@ function BrowserRoot() {
 }
 
 try {
+  const password = await promptForPassword();
+  passwordGate = await createPasswordGate(password);
   const root = createRoot(BrowserRoot);
   // Terminal input routinely exceeds Seniman's form-oriented event limit.
   root.setRateLimit({ disabled: true });
@@ -2924,17 +2938,22 @@ try {
     root,
     options.port,
     options.listenHosts,
-    options.allowedOrigins
+    options.allowedOrigins,
+    passwordGate
   );
   for (const host of options.listenHosts) {
     console.log(`seniman-meja: http://${host}:${options.port}`);
   }
 } catch (error) {
+  passwordGate?.close();
+  passwordGate = null;
   console.error(`seniman-meja: ${error.message}`);
   process.exitCode = 1;
 }
 
 async function shutdown() {
+  passwordGate?.close();
+  passwordGate = null;
   await Promise.all(
     webServers.map(
       (server) =>
