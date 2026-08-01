@@ -174,6 +174,17 @@ body::-webkit-scrollbar {
   display: none;
 }
 
+.mjt {
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.mjt::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 .mjr {
   --mj-fg: #d8dee9;
   --mj-bg: #101318;
@@ -1107,7 +1118,7 @@ function App({ model }) {
     $s(keyboardRef).current?.focus({ preventScroll: true });
   });
   const mountTerminalMetrics = $c((probe) => {
-    const terminal = probe.parentElement;
+    const terminal = probe.closest(".mjt");
     if (!terminal) {
       return;
     }
@@ -1778,6 +1789,107 @@ function App({ model }) {
       });
     };
 
+    const nativeScroll = {
+      ready: false,
+      recentring: false,
+      top: 0,
+      delta: 0,
+      frame: 0,
+      centreFrame: 0,
+      endTimer: 0,
+      clientX: 0,
+      clientY: 0,
+    };
+    const nativeScrollCentre = 500000;
+    const scheduleNativeWheel = () => {
+      if (nativeScroll.frame) {
+        return;
+      }
+      nativeScroll.frame = requestAnimationFrame(() => {
+        nativeScroll.frame = 0;
+        const reports = Math.trunc(nativeScroll.delta / 24);
+        if (!reports) {
+          return;
+        }
+        const batch = Math.max(-8, Math.min(8, reports));
+        nativeScroll.delta -= batch * 24;
+        dispatchWheel(
+          false,
+          batch,
+          nativeScroll.clientX,
+          nativeScroll.clientY,
+          0
+        );
+        if (Math.abs(nativeScroll.delta) >= 24) {
+          scheduleNativeWheel();
+        }
+      });
+    };
+    const centreNativeScroll = () => {
+      if (!nativeScroll.ready) {
+        return;
+      }
+      if (nativeScroll.frame) {
+        nativeScroll.endTimer = setTimeout(() => {
+          nativeScroll.endTimer = 0;
+          centreNativeScroll();
+        }, 32);
+        return;
+      }
+      nativeScroll.delta = 0;
+      nativeScroll.recentring = true;
+      terminal.scrollTop = nativeScrollCentre;
+      nativeScroll.top = terminal.scrollTop;
+      nativeScroll.centreFrame = requestAnimationFrame(() => {
+        nativeScroll.centreFrame = 0;
+        nativeScroll.recentring = false;
+        nativeScroll.top = terminal.scrollTop;
+      });
+    };
+    const scheduleNativeScrollEnd = () => {
+      if (nativeScroll.endTimer) {
+        clearTimeout(nativeScroll.endTimer);
+      }
+      nativeScroll.endTimer = setTimeout(() => {
+        nativeScroll.endTimer = 0;
+        centreNativeScroll();
+      }, "onscrollend" in terminal ? 750 : 200);
+    };
+    const nativeScrollEvent = () => {
+      const top = terminal.scrollTop;
+      if (!nativeScroll.ready || nativeScroll.recentring) {
+        nativeScroll.top = top;
+        return;
+      }
+      const delta = top - nativeScroll.top;
+      nativeScroll.top = top;
+      if (!delta) {
+        return;
+      }
+      if (
+        nativeScroll.delta !== 0 &&
+        Math.sign(nativeScroll.delta) !== Math.sign(delta)
+      ) {
+        nativeScroll.delta = 0;
+      }
+      nativeScroll.delta += delta;
+      scheduleNativeWheel();
+      scheduleNativeScrollEnd();
+    };
+    const nativeScrollEnd = () => {
+      if (nativeScroll.endTimer) {
+        clearTimeout(nativeScroll.endTimer);
+        nativeScroll.endTimer = 0;
+      }
+      centreNativeScroll();
+    };
+    nativeScroll.centreFrame = requestAnimationFrame(() => {
+      nativeScroll.centreFrame = 0;
+      terminal.scrollTop = nativeScrollCentre;
+      nativeScroll.top = terminal.scrollTop;
+      nativeScroll.ready = true;
+    });
+
     let gesture = null;
     let mouseCapture = null;
     const clearGestureTimer = () => {
@@ -1840,13 +1952,12 @@ function App({ model }) {
         mode: "pending",
         startX: event.clientX,
         startY: event.clientY,
-        lastY: event.clientY,
-        accumulatedY: 0,
         column: point.column,
         row: point.row,
         holdTimer: 0,
       };
-      terminal.setPointerCapture?.(event.pointerId);
+      nativeScroll.clientX = event.clientX;
+      nativeScroll.clientY = event.clientY;
       const current = gesture;
       current.holdTimer = setTimeout(() => {
         if (gesture !== current || current.mode !== "pending") {
@@ -1854,6 +1965,7 @@ function App({ model }) {
         }
         current.holdTimer = 0;
         current.mode = "mouse";
+        terminal.setPointerCapture?.(current.id);
         $s(sendPointerInput)(
           "press",
           0,
@@ -1906,9 +2018,10 @@ function App({ model }) {
         }
         clearGestureTimer();
         gesture.mode = "scroll";
+        return;
       }
-      event.preventDefault();
       if (gesture.mode === "mouse") {
+        event.preventDefault();
         const point = pointForClient(
           event.clientX,
           event.clientY
@@ -1922,7 +2035,6 @@ function App({ model }) {
         ) {
           return;
         }
-        gesture.lastY = event.clientY;
         gesture.column = point.column;
         gesture.row = point.row;
         $s(sendPointerInput)(
@@ -1934,40 +2046,6 @@ function App({ model }) {
         );
         return;
       }
-      const movement = event.clientY - gesture.lastY;
-      gesture.lastY = event.clientY;
-      if (
-        gesture.accumulatedY !== 0 &&
-        movement !== 0 &&
-        Math.sign(gesture.accumulatedY) !== Math.sign(movement)
-      ) {
-        gesture.accumulatedY = 0;
-      }
-      gesture.accumulatedY += movement;
-
-      const rows = Number(terminal.dataset.rows);
-      const rowHeight =
-        terminal.getBoundingClientRect().height / rows;
-      if (!Number.isFinite(rowHeight) || rowHeight <= 0) {
-        return;
-      }
-      const steps = Math.trunc(
-        gesture.accumulatedY / rowHeight
-      );
-      if (steps === 0) {
-        return;
-      }
-      gesture.accumulatedY -= steps * rowHeight;
-
-      // A downward finger drag moves terminal content downward,
-      // which is the same terminal action as wheel-up.
-      dispatchWheel(
-        false,
-        -steps,
-        event.clientX,
-        event.clientY,
-        0
-      );
     };
     const pointerEnd = (event) => {
       if (
@@ -1997,7 +2075,7 @@ function App({ model }) {
       if (!gesture || event.pointerId !== gesture.id) {
         return;
       }
-      if (gesture.mode !== "pending") {
+      if (gesture.mode === "mouse") {
         event.preventDefault();
       }
       clearGestureTimer();
@@ -2032,6 +2110,10 @@ function App({ model }) {
     };
 
     terminal.addEventListener("wheel", wheel, { passive: false });
+    terminal.addEventListener("scroll", nativeScrollEvent, {
+      passive: true,
+    });
+    terminal.addEventListener("scrollend", nativeScrollEnd);
     terminal.addEventListener("pointerdown", pointerDown);
     terminal.addEventListener("pointermove", pointerMove, {
       passive: false,
@@ -2041,6 +2123,8 @@ function App({ model }) {
 
     return () => {
       terminal.removeEventListener("wheel", wheel);
+      terminal.removeEventListener("scroll", nativeScrollEvent);
+      terminal.removeEventListener("scrollend", nativeScrollEnd);
       terminal.removeEventListener("pointerdown", pointerDown);
       terminal.removeEventListener("pointermove", pointerMove);
       terminal.removeEventListener("pointerup", pointerEnd);
@@ -2048,6 +2132,15 @@ function App({ model }) {
       clearGestureTimer();
       if (wheelFrame.id) {
         cancelAnimationFrame(wheelFrame.id);
+      }
+      if (nativeScroll.frame) {
+        cancelAnimationFrame(nativeScroll.frame);
+      }
+      if (nativeScroll.centreFrame) {
+        cancelAnimationFrame(nativeScroll.centreFrame);
+      }
+      if (nativeScroll.endTimer) {
+        clearTimeout(nativeScroll.endTimer);
       }
     };
   });
@@ -2318,6 +2411,39 @@ function App({ model }) {
       {promptStatus}
     </footer>;
 
+  const terminalSurface = <section
+      class="mjt"
+      data-columns={terminalColumns()}
+      data-rows={terminalRows()}
+      onClick={focusKeyboard}
+      onMount={mountTerminalInput}
+      style={{ position: "relative", display: "block", contain: "layout paint", margin: 0, padding: 0, overflowX: "hidden", overflowY: "scroll", overscrollBehavior: "contain", border: 0, outline: 0, background: "#101318", fontSize: "12px", touchAction: "pan-y", userSelect: "none", width: `${terminalColumns()}ch`, maxWidth: "100%", height: `${terminalRows() * TERMINAL_LINE_HEIGHT}em`, maxHeight: "calc(var(--mj-visual-viewport-height) - var(--mj-attach-bar-height))" }}
+    >
+      <div
+        style={{ position: "sticky", zIndex: 1, top: 0, left: 0, width: "100%", height: "100%", overflow: "hidden", background: "#101318" }}
+      >
+        <span
+          aria-hidden="true"
+          onMount={mountTerminalMetrics}
+          style={{ position: "absolute", display: "block", visibility: "hidden", width: "1ch", height: `${TERMINAL_LINE_HEIGHT}em`, pointerEvents: "none", whiteSpace: "pre", font: "inherit", lineHeight: TERMINAL_LINE_HEIGHT }}
+        >
+          0
+        </span>
+        {error() ? <div style={{ maxWidth: "70ch", color: "#ff9b9b", whiteSpace: "pre-wrap" }}>{error()}</div> : null}
+        {paneCollection.size() === 0
+          ? <div style={{ color: "#687386", fontSize: "12px" }}>Waiting for the first Meja frame…</div>
+          : null}
+        {paneView}
+        <div
+          aria-hidden="true"
+          style={{ position: "absolute", zIndex: 2, inset: 0, overflow: "hidden", pointerEvents: "none" }}
+        >
+          {borderView}
+        </div>
+      </div>
+      <div aria-hidden="true" style={{ width: "1px", height: "1000000px", pointerEvents: "none" }} />
+    </section>;
+
   return <main onMount={mountViewportShell} style={{ position: "absolute", inset: 0, margin: 0, padding: "0 0 var(--mj-attach-bar-height)", width: "100%", height: "var(--mj-visual-viewport-height)", overflow: "hidden", outline: "none" }}>
     <textarea
       ref={keyboardRef}
@@ -2333,32 +2459,7 @@ function App({ model }) {
       onPaste={handlePaste}
       style={{ position: "absolute", top: 0, left: 0, width: "1px", height: "1px", margin: 0, padding: 0, border: 0, fontSize: "16px", opacity: 0, pointerEvents: "none" }}
     />
-    <section
-      data-columns={terminalColumns()}
-      data-rows={terminalRows()}
-      onClick={focusKeyboard}
-      onMount={mountTerminalInput}
-      style={{ position: "relative", display: "block", contain: "layout paint", margin: 0, padding: 0, overflow: "hidden", border: 0, outline: 0, background: "#101318", fontSize: "12px", touchAction: "none", userSelect: "none", width: `${terminalColumns()}ch`, maxWidth: "100%", height: `${terminalRows() * TERMINAL_LINE_HEIGHT}em`, maxHeight: "calc(var(--mj-visual-viewport-height) - var(--mj-attach-bar-height))" }}
-    >
-      <span
-        aria-hidden="true"
-        onMount={mountTerminalMetrics}
-        style={{ position: "absolute", display: "block", visibility: "hidden", width: "1ch", height: `${TERMINAL_LINE_HEIGHT}em`, pointerEvents: "none", whiteSpace: "pre", font: "inherit", lineHeight: TERMINAL_LINE_HEIGHT }}
-      >
-        0
-      </span>
-      {error() ? <div style={{ maxWidth: "70ch", color: "#ff9b9b", whiteSpace: "pre-wrap" }}>{error()}</div> : null}
-      {paneCollection.size() === 0
-        ? <div style={{ color: "#687386", fontSize: "12px" }}>Waiting for the first Meja frame…</div>
-        : null}
-      {paneView}
-      <div
-        aria-hidden="true"
-        style={{ position: "absolute", zIndex: 2, inset: 0, overflow: "hidden", pointerEvents: "none" }}
-      >
-        {borderView}
-      </div>
-    </section>
+    {terminalSurface}
     {attachBar}
   </main>;
 }

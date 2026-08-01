@@ -1431,6 +1431,20 @@ function spanRuns(snapshot, start = 0, end = snapshot.cells.length) {
 }
 
 
+const PROMPT_KITTY_KEY_KINDS = Object.freeze({
+  13: "enter",
+  27: "escape",
+  127: "backspace",
+  57344: "escape",
+  57345: "enter",
+  57347: "backspace",
+  57349: "delete",
+  57350: "left",
+  57351: "right",
+  57356: "home",
+  57357: "end",
+});
+
 class PromptInputDecoder {
   constructor() {
     this.pending = "";
@@ -1561,6 +1575,37 @@ class PromptInputDecoder {
 
       const final = sequence.at(-1);
       const body = sequence.slice(2, -1);
+      if (final === "u") {
+        const fields = body.split(";");
+        const code = Number(fields[0]?.split(":", 1)[0]);
+        const modifierAndEvent = fields[1]?.split(":") ?? ["1"];
+        const modifiers = Number(modifierAndEvent[0]);
+        const action = Number(modifierAndEvent[1] ?? "1");
+        if (
+          !Number.isSafeInteger(code) ||
+          code < 0 ||
+          !Number.isSafeInteger(modifiers) ||
+          modifiers < 1 ||
+          !Number.isSafeInteger(action) ||
+          action < 1 ||
+          action > 3 ||
+          action === 3
+        ) {
+          continue;
+        }
+
+        const kind = PROMPT_KITTY_KEY_KINDS[code];
+        if (kind) {
+          events.push({ kind });
+        } else if (code <= 0x10ffff) {
+          events.push({
+            kind: "rune",
+            character: String.fromCodePoint(code),
+            control: ((modifiers - 1) & 4) !== 0,
+          });
+        }
+        continue;
+      }
       let kind = {
         C: "right",
         D: "left",
@@ -2621,6 +2666,8 @@ export {
 export const __testing = {
   AsyncBytes,
   PaneScreen,
+  PromptDraft,
+  PromptInputDecoder,
   applyRenderPayload,
   readRenderFrame,
 };
