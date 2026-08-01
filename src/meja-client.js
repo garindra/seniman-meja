@@ -56,6 +56,7 @@ const DISPLAY_WRITE_TEXT_UTF8_DEFAULT = 0x07;
 const DISPLAY_FILL = 0x08;
 const DISPLAY_CURSOR_UPDATE = 0x09;
 const DISPLAY_SCROLL_REGION = 0x0a;
+const RESET_CURSOR_REVEAL_MS = 50;
 const DISPLAY_WRITE_CLUSTER = 0x0b;
 
 const DEFAULT_STYLE = Object.freeze({
@@ -913,6 +914,7 @@ class PaneScreen {
     this.styleResetPending = false;
     this.pendingStyleInstalls = [];
     this.pendingScrollRegions = [];
+    this.cursorUpdatePending = false;
   }
 
   beginFrame() {
@@ -928,6 +930,7 @@ class PaneScreen {
     staged.styleResetPending = false;
     staged.pendingStyleInstalls = [];
     staged.pendingScrollRegions = [];
+    staged.cursorUpdatePending = false;
     staged._framePaintStarted = false;
     staged._frameScrollSeen = false;
     return staged;
@@ -961,6 +964,7 @@ class PaneScreen {
     this.styleResetPending = false;
     this.pendingStyleInstalls = [];
     this.pendingScrollRegions = [];
+    this.cursorUpdatePending = false;
   }
 
   reset(cols, rows, revision) {
@@ -995,6 +999,7 @@ class PaneScreen {
       id: 0,
       style: DEFAULT_STYLE,
     }];
+    this.cursorUpdatePending = false;
     this._sharedRows = null;
     this._stylesShared = false;
   }
@@ -1234,6 +1239,7 @@ class PaneScreen {
         break;
       case DISPLAY_CURSOR_UPDATE: {
         const previousRow = this.cursor.y;
+        this.cursorUpdatePending = true;
         this.cursor = {
           x: command.x,
           y: command.y,
@@ -1338,7 +1344,7 @@ function styleClass(slot, styleId, cursor) {
   );
 }
 
-function rowSnapshot(screen, rowIndex) {
+function rowSnapshot(screen, rowIndex, showCursor = true) {
   renderDiagnostics.rowSnapshot(screen.cols);
   const cells = [];
   const screenCells = screen.cells[rowIndex];
@@ -1349,6 +1355,7 @@ function rowSnapshot(screen, rowIndex) {
       continue;
     }
     const cursor =
+      showCursor &&
       screen.cursor.visible &&
       screen.cursor.y === rowIndex &&
       screen.cursor.x === column;
@@ -1814,6 +1821,7 @@ class TerminalModel {
     this.mobileZoomStates = new Map();
     this.zoomReconcileScheduled = false;
     this.zoomCommandInFlight = false;
+    this.resetCursorRevealTimers = new Map();
   }
 
   screen(slot) {
@@ -1887,7 +1895,63 @@ class TerminalModel {
         `${screen.cols}x${screen.rows}`
       );
     }
-    this.publish(screen.resetPending, screen, true);
+    if (screen.resetPending) {
+      this.clearResetCursorReveal(slot);
+      this.publish(true, screen, true, false, {
+        showCursor: false,
+      });
+      this.scheduleResetCursorReveal(slot, screen);
+      return;
+    }
+
+    // Only an explicit follow-up cursor command settles a cursor suppressed by
+    // a reset. An unrelated repaint of the same row must not reveal it early.
+    if (
+      !screen.cursor.visible ||
+      screen.cursorUpdatePending
+    ) {
+      this.clearResetCursorReveal(slot);
+    }
+    this.publish(false, screen, true);
+  }
+
+  clearResetCursorReveal(slot) {
+    const timer = this.resetCursorRevealTimers.get(slot);
+    if (timer) {
+      clearTimeout(timer);
+      this.resetCursorRevealTimers.delete(slot);
+    }
+  }
+
+  scheduleResetCursorReveal(slot, screen) {
+    if (
+      !screen.cursor.visible ||
+      screen.cursor.y < 0 ||
+      screen.cursor.y >= screen.rows
+    ) {
+      return;
+    }
+    const revision = screen.revision;
+    const timer = setTimeout(() => {
+      if (this.resetCursorRevealTimers.get(slot) !== timer) {
+        return;
+      }
+      this.resetCursorRevealTimers.delete(slot);
+      const current = this.screens.get(slot);
+      if (
+        current !== screen ||
+        current.revision !== revision ||
+        !current.cursor.visible ||
+        current.cursor.y < 0 ||
+        current.cursor.y >= current.rows
+      ) {
+        return;
+      }
+      this.publish(false, current, false, false, {
+        forcedRows: [current.cursor.y],
+      });
+    }, RESET_CURSOR_REVEAL_MS);
+    this.resetCursorRevealTimers.set(slot, timer);
   }
 
   setError(error) {
@@ -1967,7 +2031,8 @@ class TerminalModel {
     reset,
     screen = null,
     includePendingScrollRegions = false,
-    layoutChanged = false
+    layoutChanged = false,
+    { showCursor = true, forcedRows = null } = {}
   ) {
     const event = {
       slot: screen?.slot ?? null,
@@ -1987,15 +2052,23 @@ class TerminalModel {
       rows: [],
       clipboardText: null,
     };
-    if (screen && reset) {
+    if (screen && forcedRows) {
+      event.rows = forcedRows.map((index) => ({
+        index,
+        row: rowSnapshot(screen, index, showCursor),
+      }));
+    } else if (screen && reset) {
       event.rows = Array.from(
         { length: screen.rows },
-        (_, index) => ({ index, row: rowSnapshot(screen, index) })
+        (_, index) => ({
+          index,
+          row: rowSnapshot(screen, index, showCursor),
+        })
       );
     } else if (screen) {
       event.rows = Array.from(screen.dirtyRows, (index) => ({
         index,
-        row: rowSnapshot(screen, index),
+        row: rowSnapshot(screen, index, showCursor),
       }));
     }
     for (const listener of this.listeners) {
@@ -2022,6 +2095,10 @@ class TerminalModel {
   }
 
   disconnect() {
+    for (const timer of this.resetCursorRevealTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.resetCursorRevealTimers.clear();
     this.inputSender = null;
     this.promptResultSender = null;
     this.resizeSender = null;

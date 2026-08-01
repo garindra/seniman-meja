@@ -23,7 +23,7 @@
   },
   "dependencies": {
     "@infisical/quic": "^1.0.8",
-    "seniman": "0.0.173"
+    "seniman": "0.0.174"
   },
   "devDependencies": {
     "@babel/cli": "^7.28.3",

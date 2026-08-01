@@ -30,7 +30,12 @@ import {
 import { renderDiagnostics } from "./render-diagnostics.js";
 import { TerminalRow } from "./terminal-row.js";
 
-const VIEWPORT_RESIZE_SETTLE_MS = 80;
+// Mobile VisualViewport resize events can pause briefly while browser chrome or
+// the keyboard is still animating. A short debounce sends intermediate terminal
+// sizes, making full-screen applications redraw the cursor several times at
+// transient positions. Wait through those gaps and resize once at the final
+// viewport size.
+const VIEWPORT_RESIZE_SETTLE_MS = 250;
 const TERMINAL_LINE_HEIGHT = 1.24;
 const SPAN_WIDTH_CLASS_MAX = 10;
 const KEY_INPUT = {
@@ -145,6 +150,7 @@ html {
   margin: 0;
   overflow: hidden;
   overflow: clip;
+  scrollbar-width: none;
   overscroll-behavior: none;
   background: #101318;
   color: #d8dee9;
@@ -159,9 +165,17 @@ body {
   margin: 0;
   overflow: hidden;
   overflow: clip;
+  scrollbar-width: none;
   overscroll-behavior: none;
   background: #101318;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 * {
@@ -1376,18 +1390,30 @@ function App({ model }) {
       }, 750);
     };
     const press = (event) => {
-      if (
-        event.type === "pointerdown" &&
-        event.pointerType === "touch"
-      ) {
-        return;
-      }
       const button = event.target.closest("button");
       if (!button || !bar.contains(button)) {
         return;
       }
+      const idle = bar.classList.contains("mj-mode-idle");
+      if (
+        event.type === "pointerdown" &&
+        event.pointerType === "touch"
+      ) {
+        // On iOS Safari the pointer event arrives before touchstart. If its
+        // default action is allowed, Safari can focus the button and dismiss
+        // the software keyboard before touchstart gets a chance to preserve
+        // the textarea focus. Leave activation to touchstart, but cancel the
+        // earlier focus transfer while the keyboard accessory bar is active.
+        if (
+          !idle ||
+          button.classList.contains("prompt-cancel")
+        ) {
+          event.preventDefault();
+        }
+        return;
+      }
       setPressedButton(button);
-      if (bar.classList.contains("mj-mode-idle")) {
+      if (idle) {
         if (button.classList.contains("prompt-cancel")) {
           event.preventDefault();
           suppressButtonClick(button);
@@ -1483,10 +1509,6 @@ function App({ model }) {
     const position = () => {
       frame = 0;
       const viewport = window.visualViewport;
-      const width =
-        viewport && Number.isFinite(viewport.width)
-          ? viewport.width
-          : window.innerWidth;
       const height =
         viewport && Number.isFinite(viewport.height)
           ? viewport.height
@@ -1501,7 +1523,6 @@ function App({ model }) {
       shell.style.right = "auto";
       shell.style.bottom = "auto";
       shell.style.left = "0px";
-      shell.style.width = `${Math.max(0, width)}px`;
       shell.style.height = `${Math.max(0, height)}px`;
 
       const orientation =
