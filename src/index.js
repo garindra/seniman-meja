@@ -29,6 +29,7 @@ import {
 } from "./password-auth.js";
 import { renderDiagnostics } from "./render-diagnostics.js";
 import { TerminalRow } from "./terminal-row.js";
+import { encodeTerminalKey } from "./terminal-keyboard.js";
 
 // Mobile VisualViewport resize events can pause briefly while browser chrome or
 // the keyboard is still animating. A short debounce sends intermediate terminal
@@ -67,25 +68,25 @@ const KEY_INPUT = {
   F12: "\x1b[24~",
 };
 const TERMINAL_KEY_NAMES = Object.keys(KEY_INPUT);
-const HELPER_INPUT = {
-  "ctrl-b": "\x02",
-  "ctrl-c": "\x03",
-  tab: "\t",
-  escape: KEY_INPUT.Escape,
-  "arrow-up": KEY_INPUT.ArrowUp,
-  "arrow-down": KEY_INPUT.ArrowDown,
-  "arrow-right": KEY_INPUT.ArrowRight,
-  "arrow-left": KEY_INPUT.ArrowLeft,
-  home: KEY_INPUT.Home,
-  end: KEY_INPUT.End,
-  "page-up": KEY_INPUT.PageUp,
-  "page-down": KEY_INPUT.PageDown,
-  colon: ":",
-  comma: ",",
-  slash: "/",
-  dash: "-",
-  tilde: "~",
-  pipe: "|",
+const HELPER_KEYS = {
+  "ctrl-b": { key: "b", code: "KeyB", ctrl: true },
+  "ctrl-c": { key: "c", code: "KeyC", ctrl: true },
+  tab: { key: "Tab" },
+  escape: { key: "Escape" },
+  "arrow-up": { key: "ArrowUp" },
+  "arrow-down": { key: "ArrowDown" },
+  "arrow-right": { key: "ArrowRight" },
+  "arrow-left": { key: "ArrowLeft" },
+  home: { key: "Home" },
+  end: { key: "End" },
+  "page-up": { key: "PageUp" },
+  "page-down": { key: "PageDown" },
+  colon: { key: ":" },
+  comma: { key: "," },
+  slash: { key: "/" },
+  dash: { key: "-" },
+  tilde: { key: "~" },
+  pipe: { key: "|" },
 };
 const KEY_HELPERS = [
   ["tab", "Tab"],
@@ -123,26 +124,9 @@ const REPEATABLE_KEY_HELPERS = new Set([
   "page-down",
 ]);
 
-function applyControl(value) {
-  if (value.length !== 1) {
-    return null;
-  }
-  const key = value.toUpperCase();
-  const code = key.codePointAt(0);
-  if (value === " " || value === "2") {
-    return "\x00";
-  }
-  if (value === "?") {
-    return "\x7f";
-  }
-  return code >= 64 && code <= 95
-    ? String.fromCodePoint(code & 0x1f)
-    : null;
-}
-
 const cssText = `
 html {
-  --mj-attach-bar-height: 32px;
+  --mj-attach-bar-height: 30px;
   --mj-visual-viewport-height: 100%;
   width: 100%;
   height: var(--mj-visual-viewport-height);
@@ -204,6 +188,7 @@ body::-webkit-scrollbar {
 :where(.mjr > span) {
   position: absolute;
   display: inline-block;
+  height: 100%;
   vertical-align: top;
   color: var(--mj-fg);
   background-color: var(--mj-bg);
@@ -212,6 +197,11 @@ body::-webkit-scrollbar {
   text-decoration: none;
   opacity: 1;
   visibility: visible;
+}
+
+:where(.mjr > .mjb) {
+  color: transparent;
+  background-color: var(--mj-fg);
 }
 
 ${Array.from(
@@ -237,7 +227,7 @@ ${Array.from(
 
 @media (hover: none), (pointer: coarse), (max-width: 700px) {
   html {
-    --mj-attach-bar-height: 42px;
+    --mj-attach-bar-height: 40px;
   }
 
   .attach-bar.mj-mode-keys .window-tabs,
@@ -286,7 +276,7 @@ ${Array.from(
   color: #d8dee9;
   background: #202630;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), inset 0 -2px 0 #151a21;
-  font: 12px/calc(var(--mj-attach-bar-height) - 1px) ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font: 11px/calc(var(--mj-attach-bar-height) - 1px) ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   cursor: pointer;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
@@ -366,7 +356,7 @@ ${Array.from(
 
 .key-helper .key-helper-swap {
   border-right: 0;
-  font-size: 18px;
+  font-size: 17px;
 }
 
 @media (max-width: 480px) {
@@ -811,7 +801,7 @@ function PromptStatus({ readStatus, readDraft }) {
         ? "Meja status message"
         : "Meja command prompt"
     }
-    style={{ position: "absolute", zIndex: 1, inset: 0, display: "flex", minWidth: 0, alignItems: "center", overflow: "hidden", padding: "0 7px", color: "#f5f9ff", background: "#287dcc", fontSize: "12px", lineHeight: "calc(var(--mj-attach-bar-height) - 1px)", whiteSpace: "pre" }}
+    style={{ position: "absolute", zIndex: 1, inset: 0, display: "flex", minWidth: 0, alignItems: "center", overflow: "hidden", padding: "0 7px", color: "#f5f9ff", background: "#287dcc", fontSize: "11px", lineHeight: "calc(var(--mj-attach-bar-height) - 1px)", whiteSpace: "pre" }}
   >
     {status.kind === STATUS_MESSAGE
       ? <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "clip" }}>
@@ -911,50 +901,45 @@ function App({ model }) {
     }));
   };
   const handleKeyPress = async (press) => {
-    const { key, ctrl, alt, shift } = press;
-    let data = null;
-
-    if (ctrl && !alt && key.length === 1) {
-      data = applyControl(key);
-    } else if (KEY_INPUT[key] !== undefined) {
-      data =
-        key === "Tab" && shift
-          ? "\x1b[Z"
-          : KEY_INPUT[key];
-      if (alt && key !== "Escape") {
-        data = "\x1b" + data;
-      }
-    } else if (!ctrl && key.length === 1) {
-      data = (alt ? "\x1b" : "") + key;
-    }
+    const data = encodeTerminalKey(press);
 
     if (data !== null) {
-      await model.sendInput(
-        data,
-        key === "Escape" && !alt
-      );
-      if (attachView() === "prefix") {
+      // Semantic Kitty packets are complete and never need the standalone
+      // raw-Escape ambiguity flush represented by SourceIdle.
+      await model.sendInput(data, false);
+      if (
+        press.action !== "release" &&
+        attachView() === "prefix"
+      ) {
         setAttachView("keys");
       }
     }
   };
-  const consumeHelperModifiers = (value) => {
-    const ctrl = helperCtrl();
-    const alt = helperAlt();
-    let data = value;
-    if (ctrl) {
-      data = applyControl(data) ?? data;
-    }
-    if (alt) {
-      data = "\x1b" + data;
-    }
-    if (ctrl) {
+  const consumeHelperKey = (descriptor) => {
+    const ctrl = descriptor.ctrl || helperCtrl();
+    const alt = descriptor.alt || helperAlt();
+    const key = {
+      ...descriptor,
+      ctrl,
+      alt,
+    };
+    const press = encodeTerminalKey({
+      ...key,
+      action: "press",
+    });
+    const release = encodeTerminalKey({
+      ...key,
+      action: "release",
+    });
+    if (helperCtrl()) {
       setHelperCtrl(false);
     }
-    if (alt) {
+    if (helperAlt()) {
       setHelperAlt(false);
     }
-    return data;
+    return press === null || release === null
+      ? null
+      : press + release;
   };
   const handleTextInput = async (kind, value) => {
     const input =
@@ -968,8 +953,30 @@ function App({ model }) {
               ? KEY_INPUT.Delete
               : null;
     if (input) {
+      const descriptor =
+        kind === "enter"
+          ? { key: "Enter" }
+          : kind === "backspace"
+            ? { key: "Backspace" }
+            : kind === "delete"
+              ? { key: "Delete" }
+              : Array.from(value).length === 1
+                ? { key: value }
+                : null;
+      const modified = helperCtrl() || helperAlt();
+      const data =
+        modified && descriptor
+          ? consumeHelperKey(descriptor)
+          : input;
+      if (modified && !descriptor) {
+        setHelperCtrl(false);
+        setHelperAlt(false);
+      }
+      if (data === null) {
+        return;
+      }
       await model.sendInput(
-        consumeHelperModifiers(input),
+        data,
         false
       );
       if (attachView() === "prefix") {
@@ -988,14 +995,14 @@ function App({ model }) {
       setHelperAlt((active) => !active);
       return;
     }
-    const input = HELPER_INPUT[press];
-    if (input === undefined) {
+    const descriptor = HELPER_KEYS[press];
+    if (descriptor === undefined) {
       return;
     }
-    await model.sendInput(
-      consumeHelperModifiers(input),
-      press === "escape"
-    );
+    const data = consumeHelperKey(descriptor);
+    if (data !== null) {
+      await model.sendInput(data, false);
+    }
   };
   const handleAttachAction = async (action) => {
     if (action === "view:tabs") {
@@ -1073,6 +1080,10 @@ function App({ model }) {
         row,
         modifiers
       );
+  const sendTapInput = async (column, row) => {
+    await model.sendPointer("press", 0, column, row, 0);
+    await model.sendPointer("release", 0, column, row, 0);
+  };
   const selectWindow = async (windowId) =>
     model.selectWindow(windowId);
   const createWindow = async () => model.createWindow();
@@ -1203,7 +1214,7 @@ function App({ model }) {
     }, VIEWPORT_RESIZE_SETTLE_MS);
     onCleanup(() => clearTimeout(resizeTimer));
   });
-  const handleKeyDown = $c((event) => {
+  const handleKeyboardEvent = $c((event) => {
     if (event.isComposing || event.metaKey) {
       return;
     }
@@ -1215,26 +1226,31 @@ function App({ model }) {
       return;
     }
 
-    const controlCode = event.key
-      .toUpperCase()
-      .codePointAt(0);
-    const controlCharacter =
-      event.key === " " ||
-      event.key === "2" ||
-      event.key === "?" ||
-      (
-        controlCode >= 64 &&
-        controlCode <= 95
-      );
+    if (event.getModifierState?.("AltGraph")) {
+      return;
+    }
+
+    const shortcutCode =
+      /^Key[A-Z]$/.test(event.code) ||
+      /^(?:Digit|Numpad)[0-9]$/.test(event.code) ||
+      [
+        "Space",
+        "Minus",
+        "Equal",
+        "BracketLeft",
+        "BracketRight",
+        "Backslash",
+        "Semicolon",
+        "Quote",
+        "Backquote",
+        "Comma",
+        "Period",
+        "Slash",
+      ].includes(event.code);
     const handled =
       $s(TERMINAL_KEY_NAMES).includes(event.key) ||
-      (
-        event.key.length === 1 &&
-        (
-          !event.ctrlKey ||
-          (!event.altKey && controlCharacter)
-        )
-      );
+      Array.from(event.key).length === 1 ||
+      ((event.ctrlKey || event.altKey) && shortcutCode);
     if (!handled) {
       return;
     }
@@ -1242,9 +1258,16 @@ function App({ model }) {
     event.preventDefault();
     $s(handleKeyPress)({
       key: event.key,
+      code: event.code,
       ctrl: event.ctrlKey,
       alt: event.altKey,
       shift: event.shiftKey,
+      action:
+        event.type === "keyup"
+          ? "release"
+          : event.repeat
+            ? "repeat"
+            : "press",
     });
   });
   const mountTextInput = $c((target) => {
@@ -1757,6 +1780,17 @@ function App({ model }) {
 
     let gesture = null;
     let mouseCapture = null;
+    const clearGestureTimer = () => {
+      if (gesture?.holdTimer) {
+        clearTimeout(gesture.holdTimer);
+        gesture.holdTimer = 0;
+      }
+    };
+    const releasePointer = (pointerId) => {
+      if (terminal.hasPointerCapture?.(pointerId)) {
+        terminal.releasePointerCapture(pointerId);
+      }
+    };
     const pointerDown = (event) => {
       if (event.pointerType === "mouse") {
         const point = pointForClient(
@@ -1791,12 +1825,43 @@ function App({ model }) {
       if (event.pointerType !== "touch") {
         return;
       }
+      if (gesture) {
+        return;
+      }
+      const point = pointForClient(
+        event.clientX,
+        event.clientY
+      );
+      if (!point) {
+        return;
+      }
       gesture = {
         id: event.pointerId,
+        mode: "pending",
+        startX: event.clientX,
+        startY: event.clientY,
         lastY: event.clientY,
         accumulatedY: 0,
+        column: point.column,
+        row: point.row,
+        holdTimer: 0,
       };
       terminal.setPointerCapture?.(event.pointerId);
+      const current = gesture;
+      current.holdTimer = setTimeout(() => {
+        if (gesture !== current || current.mode !== "pending") {
+          return;
+        }
+        current.holdTimer = 0;
+        current.mode = "mouse";
+        $s(sendPointerInput)(
+          "press",
+          0,
+          current.column,
+          current.row,
+          0
+        );
+      }, 350);
     };
     const pointerMove = (event) => {
       if (
@@ -1831,7 +1896,44 @@ function App({ model }) {
       if (!gesture || event.pointerId !== gesture.id) {
         return;
       }
+      if (gesture.mode === "pending") {
+        const distance = Math.hypot(
+          event.clientX - gesture.startX,
+          event.clientY - gesture.startY
+        );
+        if (distance < 8) {
+          return;
+        }
+        clearGestureTimer();
+        gesture.mode = "scroll";
+      }
       event.preventDefault();
+      if (gesture.mode === "mouse") {
+        const point = pointForClient(
+          event.clientX,
+          event.clientY
+        );
+        if (
+          !point ||
+          (
+            point.column === gesture.column &&
+            point.row === gesture.row
+          )
+        ) {
+          return;
+        }
+        gesture.lastY = event.clientY;
+        gesture.column = point.column;
+        gesture.row = point.row;
+        $s(sendPointerInput)(
+          "move",
+          0,
+          point.column,
+          point.row,
+          0
+        );
+        return;
+      }
       const movement = event.clientY - gesture.lastY;
       gesture.lastY = event.clientY;
       if (
@@ -1895,9 +1997,37 @@ function App({ model }) {
       if (!gesture || event.pointerId !== gesture.id) {
         return;
       }
-      if (terminal.hasPointerCapture?.(event.pointerId)) {
-        terminal.releasePointerCapture(event.pointerId);
+      if (gesture.mode !== "pending") {
+        event.preventDefault();
       }
+      clearGestureTimer();
+      if (gesture.mode === "mouse") {
+        const point =
+          pointForClient(event.clientX, event.clientY) ??
+          {
+            column: gesture.column,
+            row: gesture.row,
+          };
+        $s(sendPointerInput)(
+          "release",
+          0,
+          point.column,
+          point.row,
+          0
+        );
+      } else if (
+        gesture.mode === "pending" &&
+        event.type !== "pointercancel"
+      ) {
+        const point =
+          pointForClient(event.clientX, event.clientY) ??
+          {
+            column: gesture.column,
+            row: gesture.row,
+          };
+        $s(sendTapInput)(point.column, point.row);
+      }
+      releasePointer(event.pointerId);
       gesture = null;
     };
 
@@ -1915,6 +2045,7 @@ function App({ model }) {
       terminal.removeEventListener("pointermove", pointerMove);
       terminal.removeEventListener("pointerup", pointerEnd);
       terminal.removeEventListener("pointercancel", pointerEnd);
+      clearGestureTimer();
       if (wheelFrame.id) {
         cancelAnimationFrame(wheelFrame.id);
       }
@@ -2058,7 +2189,7 @@ function App({ model }) {
     unsubscribe();
   });
 
-  const windowTabs = <div class="window-tabs" role="tablist" style={{ position: "absolute", inset: 0, alignItems: "stretch", width: "100%", height: "100%", minWidth: 0, overflow: "hidden", color: "#9aa5b5", background: "#171b22", fontSize: "12px", lineHeight: "calc(var(--mj-attach-bar-height) - 1px)", whiteSpace: "nowrap" }}>
+  const windowTabs = <div class="window-tabs" role="tablist" style={{ position: "absolute", inset: 0, alignItems: "stretch", width: "100%", height: "100%", minWidth: 0, overflow: "hidden", color: "#9aa5b5", background: "#171b22", fontSize: "11px", lineHeight: "calc(var(--mj-attach-bar-height) - 1px)", whiteSpace: "nowrap" }}>
         <div style={{ flex: "0 0 auto", padding: "0 7px", color: "#687386", borderRight: "1px solid #343b46" }}>
           {clientStatus().sessionName ||
             (
@@ -2088,7 +2219,7 @@ function App({ model }) {
         >
           Keys
         </button>
-        <div class="window-tabs-location" onMount={mountStatusLocation} style={{ flex: "0 0 25%", marginLeft: "auto", width: "25%", maxWidth: "25%", minWidth: 0, overflow: "hidden", padding: "0 7px", color: "#9aa5b5", background: "#171b22", fontSize: "12px", whiteSpace: "nowrap" }}>
+        <div class="window-tabs-location" onMount={mountStatusLocation} style={{ flex: "0 0 25%", marginLeft: "auto", width: "25%", maxWidth: "25%", minWidth: 0, overflow: "hidden", padding: "0 7px", color: "#9aa5b5", background: "#171b22", fontSize: "11px", whiteSpace: "nowrap" }}>
           {fitStatusLocation(
             statusLocationParts(),
             statusLocationColumns()
@@ -2197,7 +2328,8 @@ function App({ model }) {
       inputmode="text"
       spellcheck="false"
       onMount={mountTextInput}
-      onKeyDown={handleKeyDown}
+      onKeyDown={handleKeyboardEvent}
+      onKeyUp={handleKeyboardEvent}
       onPaste={handlePaste}
       style={{ position: "absolute", top: 0, left: 0, width: "1px", height: "1px", margin: 0, padding: 0, border: 0, fontSize: "16px", opacity: 0, pointerEvents: "none" }}
     />
