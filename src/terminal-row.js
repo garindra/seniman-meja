@@ -13,6 +13,10 @@ function spanWidth(span) {
   return span.end - span.start;
 }
 
+function isFullBlock(text) {
+  return /^█+$/.test(text);
+}
+
 function usesInlineWidth(span) {
   return spanWidth(span) > SPAN_WIDTH_CLASS_MAX;
 }
@@ -208,13 +212,13 @@ export function TerminalSpan({ record }) {
 
   return inlineWidth
     ? <span
-        class={className()}
+        class={`${className()}${isFullBlock(text()) ? " mjb" : ""}`}
         style={{ left: `${start()}ch`, width: `${width()}ch` }}
       >
         {text()}
       </span>
     : <span
-        class={`${className()} mjw-${width()}`}
+        class={`${className()} mjw-${width()}${isFullBlock(text()) ? " mjb" : ""}`}
         style={{ left: `${start()}ch` }}
       >
         {text()}
